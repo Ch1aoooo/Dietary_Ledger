@@ -34,7 +34,7 @@
 
 ```mermaid
 flowchart TD
-    A[使用者上傳發票 CSV檔] --> B[前端解析與資料整形]
+    A[使用者上傳發票 CSV 檔] --> B[前端解析與資料整形]
     P[個人飲食檔案] --> C[AI 分析流程]
     B --> C
     C --> D[FastAPI 模型代理]
