@@ -5,7 +5,7 @@
 解決兩個純前端做不到的事：
   1. CORS：本地/內網模型 (ex: http://10.113.43.4:9000) 瀏覽器打不過去，
      這裡用 httpx 在伺服器端呼叫，完全繞過瀏覽器跨域限制。
-  2. API key 不進瀏覽器（OpenAI 情境）。
+  2. API key 不進模型供應商以外的瀏覽器請求（OpenAI / Google 情境）。
 
 Design note：本代理「只做模型代理」，不做任何業務邏輯。
 CSV 解析、歸因引擎、localStorage 全都留在前端。檔案刻意保持小而薄。
@@ -63,6 +63,7 @@ class BatchRequest(BaseModel):
     items: list[BatchItem]
     profile: dict
     modelConfig: dict  # {provider, baseUrl?, model, apiKey?}
+    lang: str = "zh"  # "zh" | "en" — 只影響模型產生的自由文字（reasoning）語言
 
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +83,14 @@ SYSTEM_PROMPT = (
     ' "stockable": true|false,\n'
     ' "shelfLife": "very short|short|medium|long",\n'
     ' "typicalUnit": "<食用單位，ex: 罐/份/杯>",\n'
+    ' "estimatedCalories": <number，這筆「本人實際食用量」（不是購買量）'
+    "對應的粗估熱量，單位大卡，非食品請填 0>,\n"
+    ' "isRefinedCarb": true|false，是否含精緻澱粉'
+    "（白飯、白麵包、白麵條、含糖甜點、手搖飲的糖等精製碳水，非食品請填 false）,\n"
+    ' "isWholeFood": true|false，是否為原型食物'
+    "（未經高度加工，如新鮮蔬果、原型肉類/海鮮、糙米/全穀，非食品請填 false）,\n"
+    ' "giLevel": "high|medium|low"，這個食物整體的升糖指數等級（非食品請填 "low"）,\n'
+    ' "isFried": true|false，是否為油炸類（非食品請填 false）,\n'
     ' "estimatedSelfConsumed": <number>,\n'
     ' "distributionDays": <number|null>,\n'
     ' "confidence": <0-100>,\n'
@@ -90,12 +99,89 @@ SYSTEM_PROMPT = (
     ' "reasoning": ["<1-2句中文推論>", "..."]}\n'
     "規則：咖啡/手搖/奶茶/鮮奶屬飲料，依 profile 的 drinking 習慣推估；"
     "可久放飲料（罐裝可樂等）常為囤貨自用可分散多天；便當/新鮮餐點不可久放，"
-    "超出個人一餐典型份量的部分可能是替他人買或共享。"
+    "超出個人一餐典型份量的部分可能是替他人買或共享；"
+    "購買數量若是計件單位（個/顆/粒/片等，例如鍋貼、水餃、餛飩、貢丸、"
+    "雞塊、壽司、小籠包這類一份就包含多個的食物），不要把購買的『個數』"
+    "直接當成『幾份』或『幾餐』——這類食物一份/一餐通常包含多個"
+    "（例如鍋貼一份約 8-10 個、水餃一份約 10-15 顆），請先判斷這批購買量"
+    "大約相當於幾份典型餐點份量，estimatedSelfConsumed 請以換算後、對使用者"
+    "有意義的份量為準（而不是逐個計算），typicalUnit 也請填能反映這個份量"
+    "概念的單位（例如「份」），不要直接照抄「個」，否則後續跨品項加總"
+    "（例如統計『本人實際食用份數』）會被少數計件類食物的高個數嚴重灌水；"
+    "profile 的身高體重可作為推估食用量/份量大小的參考依據之一"
+    "（例如體型較大者一餐實際食用量可能略高於平均，但仍須以商品本身的"
+    "typicalUnit、購買數量等結構化資訊為主，身高體重只是輔助微調，不是唯一依據）；"
+    "estimatedCalories/isRefinedCarb/isWholeFood/giLevel/isFried 這五項是"
+    "針對食物本身營養屬性的判斷，依品名、店家、常見作法（例如便當通常搭配"
+    "白飯、手搖飲通常含糖、鹹酥雞/炸雞/天婦羅屬油炸）合理推估即可，"
+    "不需要使用者額外提供成分資訊。"
 )
+
+# 英文介面：分類/enum 欄位維持不變，只要求模型把 reasoning 這串自由文字
+# 改用英文寫。放在 system prompt 最後，覆蓋前面「1-2句中文推論」的字樣。
+REASONING_LANG_EN = (
+    "\n\nOUTPUT LANGUAGE: The user's interface is in English. Write every "
+    'string inside the "reasoning" array in natural, concise English. '
+    "All other fields keep their fixed enum / numeric values unchanged."
+)
+
+# llama.cpp 支援 OpenAI-compatible 的 schema-constrained JSON。Ornith 在
+# 關閉 thinking 後速度已足夠，但對較長的商品清單仍偶爾會漏逗號或多輸出
+# Markdown fence；把整個陣列交給 grammar 約束，讓 extract_json_array 永遠
+# 收到可解析的資料。
+ANALYSIS_RESPONSE_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "idx": {"type": "integer"},
+            "itemName": {"type": "string"},
+            "isFood": {"type": "boolean"},
+            "category": {"type": "string"},
+            "stockable": {"type": "boolean"},
+            "shelfLife": {"type": "string"},
+            "typicalUnit": {"type": "string"},
+            "estimatedCalories": {"type": "number"},
+            "isRefinedCarb": {"type": "boolean"},
+            "isWholeFood": {"type": "boolean"},
+            "giLevel": {"type": "string"},
+            "isFried": {"type": "boolean"},
+            "estimatedSelfConsumed": {"type": "number"},
+            "distributionDays": {"type": ["number", "null"]},
+            "confidence": {"type": "number"},
+            "source": {"type": "string"},
+            "needsReview": {"type": "boolean"},
+            "reasoning": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "idx",
+            "itemName",
+            "isFood",
+            "category",
+            "stockable",
+            "shelfLife",
+            "typicalUnit",
+            "estimatedCalories",
+            "isRefinedCarb",
+            "isWholeFood",
+            "giLevel",
+            "isFried",
+            "estimatedSelfConsumed",
+            "distributionDays",
+            "confidence",
+            "source",
+            "needsReview",
+            "reasoning",
+        ],
+        "additionalProperties": False,
+    },
+}
 
 
 def build_user_prompt(profile: dict, items: list[dict]) -> str:
     profile_lines = [
+        f"- 身高: {profile.get('heightCm', 170)} 公分",
+        f"- 體重: {profile.get('weightKg', 65)} 公斤",
         f"- 家庭人數: {profile.get('householdSize', 1)}",
         f"- 是否常替他人購買: {profile.get('buysForOthers', 'occasionally')}",
         f"- 一餐典型份量: {profile.get('typicalMealServings', 1)}",
@@ -142,6 +228,11 @@ def resolve_endpoint(cfg: dict) -> tuple[str, str | None]:
     base = (cfg.get("baseUrl") or "").strip().rstrip("/")
     if not base:
         base = OPENAI_DEFAULT_BASE if provider == "openai" else ""
+    # OpenAI-compatible local servers conventionally expose their chat API
+    # under /v1.  Accept a bare local host too, since older saved settings in
+    # the frontend used http://127.0.0.1:55984 without the suffix.
+    if provider == "local" and base and not base.endswith("/v1"):
+        base = f"{base}/v1"
     api_key = (cfg.get("apiKey") or "").strip() or None
     url = f"{base}/chat/completions"
     return url, api_key
@@ -204,17 +295,55 @@ async def call_model(cfg: dict, items: list[dict]) -> list:
     url, api_key = resolve_endpoint(cfg)
     headers = {"Content-Type": "application/json", **auth_headers(api_key)}
 
+    system_prompt = SYSTEM_PROMPT
+    if cfg.get("_lang") == "en":
+        # 連 prompt 內嵌的「<1-2句中文推論>」範例字樣也一起換掉，避免模型
+        # 照著那句 placeholder 用中文寫 reasoning。
+        system_prompt = system_prompt.replace(
+            "<1-2句中文推論>", "<1-2 short sentences of reasoning, in English>"
+        )
+        system_prompt += REASONING_LANG_EN
+
     payload = {
         "model": cfg.get("model") or "dsv4-flash",
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": build_user_prompt(cfg.get("_profile", {}), items),
             },
         ],
         "temperature": 0.3,
+        # Ornith 的 llama.cpp chat template 預設會輸出 reasoning；這個
+        # pipeline 需要的是可直接解析的 JSON，開啟 reasoning 會把整批
+        # 商品卡在思考內容，最後超過代理 timeout。
+        "max_tokens": 2048,
     }
+
+    # 只有本機 llama.cpp 需要這個 chat-template 參數；不要把它送給
+    # OpenAI 等其他 OpenAI-compatible provider。
+    if cfg.get("provider") == "local":
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        payload["response_format"] = {
+            "type": "json_schema",
+            "schema": ANALYSIS_RESPONSE_SCHEMA,
+        }
+    elif cfg.get("provider") == "google":
+        # Google Gemini's OpenAI-compatible endpoint uses this field to turn
+        # down thinking for Gemini 3 models.  Gemini 3 does not accept
+        # reasoning_effort=none, so minimal is the fastest supported level.
+        # The Gemini OpenAI compatibility layer accepts json_object here but
+        # rejects llama.cpp's json_schema.schema request shape.
+        payload["reasoning_effort"] = "minimal"
+        payload["response_format"] = {"type": "json_object"}
+        # Even at reasoning_effort=minimal, Gemini's hidden thinking tokens
+        # are billed against max_tokens (unlike the local llama.cpp path,
+        # where thinking is fully disabled via chat_template_kwargs above).
+        # 2048 was sized for that thinking-disabled path; against Gemini it
+        # gets eaten by thinking before a 20-item JSON array can be written,
+        # so the API returns finish_reason=MAX_TOKENS with empty content and
+        # every chunk fails to parse. Give Gemini enough headroom for both.
+        payload["max_tokens"] = 8192
 
     async with httpx.AsyncClient(timeout=TIMEOUT_SEC) as client:
         data = await post_chat_completion(client, url, headers, payload)
@@ -269,6 +398,7 @@ async def understand_batch(req: BatchRequest, request: Request):
         chunk = indexed_items[i : i + CHUNK_SIZE]
         cfg = dict(req.modelConfig)
         cfg["_profile"] = req.profile
+        cfg["_lang"] = req.lang
         try:
             parsed = await call_model(cfg, chunk)
         except Exception as exc:  # 單塊失敗就丟給前端離線 fallback
@@ -423,6 +553,7 @@ class ChatRequest(BaseModel):
     modelConfig: dict
     period: str | None = None  # ex: "2026-08"
     session_id: str | None = None
+    lang: str = "zh"  # "zh" | "en" — 顧問回覆語言
 
 
 COACH_SYSTEM = (
@@ -433,7 +564,9 @@ COACH_SYSTEM = (
     "你的職責，即使使用者說『只是問問』『順便問一下』『當作聊天』也一樣不例外。\n"
     "你可以查詢使用者的電子發票飲食資料庫來回答問題。資料表 transactions 欄位：\n"
     "- purchase_date: 購買日期 (YYYY-MM-DD)\n"
-    "- invoice_no: 發票號碼\n"
+    "- invoice_no: 發票號碼（同一次消費/同一次到店通常會拆成多列，"
+    "每個品項各一列、共用同一個 invoice_no；手動輸入的紀錄沒有發票號碼，"
+    "這欄會是 NULL）\n"
     "- merchant: 店家\n"
     "- item_name: 商品品名\n"
     "- purchased_qty: 購買數量\n"
@@ -445,12 +578,58 @@ COACH_SYSTEM = (
     "- needs_review: 是否需確認 (0/1)\n\n"
     "規則：\n"
     "1. 只要是關於「你買了什麼/多少/幾次/金額/類別分布/頻率」這類資料性問題，一律先呼叫 query_diet_db 功能拿真實數據再回答，絕對不要憑印象或猜測。\n"
-    "2. 資料夠了時，直接輸出最終答案：用繁體中文、簡潔、有條理地回覆，可適時給健康建議（例如少喝含糖飲料、注意份量），但不要治療/診斷建議。\n"
-    "3. 使用者問任何跟上述職責範圍無關的問題（寫程式/程式碼/技術問題、其他領域知識、"
+    "2. 使用者問「去某家店幾次」「購買頻率」這類跟『次數』有關的問題時，"
+    "同一次消費常常會拆成好幾列（一個品項一列，見上面 invoice_no 的說明），"
+    "不能直接 COUNT(*) 品項列數當作次數，那樣會把『一次買了 5 樣東西』"
+    "誤算成『去了 5 次』。請改用 COUNT(DISTINCT invoice_no) 這類方式計算"
+    "實際到店/消費次數；如果該店家的紀錄裡 invoice_no 是 NULL（手動輸入），"
+    "改以 purchase_date（同一天視為同一次）去重計算。\n"
+    "3. 資料夠了時，直接輸出最終答案：用繁體中文、簡潔、有條理地回覆，可適時給健康建議（例如少喝含糖飲料、注意份量），但不要治療/診斷建議。\n"
+    "4. 使用者問任何跟上述職責範圍無關的問題（寫程式/程式碼/技術問題、其他領域知識、"
     "與飲食資料無關的閒聊）時，不要回答那個問題本身——禮貌說明你只能回答飲食資料庫"
     "相關的問題，並引導使用者問跟他的飲食/購買紀錄有關的事。單純的招呼語（嗨、你好、"
     "謝謝）可以簡短回應，不用長篇說明。\n"
-    "4. 收斂，不要無限查詢，查到能回答就好。"
+    "5. 收斂，不要無限查詢，查到能回答就好。"
+)
+
+# 英文介面版本：職責範圍、SQL 規則完全相同，只是改用英文說明、並要求
+# 模型「最終答案」用英文回覆。
+COACH_SYSTEM_EN = (
+    "You are the AI dietary advisor for \"Dietary Ledger\", warm and friendly in tone.\n"
+    "Your scope is narrow: (a) the user's own e-invoice dietary database, "
+    "(b) eating-habit / health suggestions related to that data. Anything else — "
+    "coding, debugging, explaining code, general knowledge, or any topic unrelated "
+    "to the dietary data — is out of scope, even if the user says they're \"just asking\" "
+    "or \"just chatting\".\n"
+    "You can query the user's e-invoice dietary database. Table `transactions` columns:\n"
+    "- purchase_date: purchase date (YYYY-MM-DD)\n"
+    "- invoice_no: invoice number (one shopping trip is usually split across several rows, "
+    "one per item, sharing the same invoice_no; manual entries have no invoice number, so "
+    "this column is NULL)\n"
+    "- merchant: store\n"
+    "- item_name: product name\n"
+    "- purchased_qty: quantity purchased\n"
+    "- unit_price / amount: unit price / line amount\n"
+    "- category: (Sugary beverages / Coffee / Prepared meals / Bakery / Desserts / Dairy / Protein / Snacks / Non-food)\n"
+    "- is_food: whether it is food (0/1)\n"
+    "- estimated_self_consumed: estimated servings the user actually ate\n"
+    "- confidence: confidence 0-100\n"
+    "- needs_review: whether confirmation is needed (0/1)\n\n"
+    "Rules:\n"
+    "1. For any data question (\"what/how much/how many times/amount/category breakdown/frequency did I buy\"), "
+    "always call query_diet_db to get real numbers first — never guess.\n"
+    "2. For \"how many times did I visit store X\" / \"purchase frequency\" questions, a single trip is often "
+    "split across rows (one per item, see invoice_no above), so do not COUNT(*) item rows as visits. "
+    "Use COUNT(DISTINCT invoice_no); when invoice_no is NULL (manual entries), de-duplicate by purchase_date "
+    "(same day = same trip).\n"
+    "3. When you have enough data, give the final answer directly: in English, concise and well organized. "
+    "You may add light dietary-health suggestions (e.g. cut back on sugary drinks, watch portion sizes), "
+    "but no treatment / diagnosis advice.\n"
+    "4. For anything outside the scope above (coding / technical questions, other domains, chit-chat unrelated "
+    "to the dietary data), do not answer the question itself — politely explain you can only help with the "
+    "dietary database and steer the user back to their food / purchase records. Plain greetings (hi, hello, "
+    "thanks) get a short reply, no long explanation.\n"
+    "5. Converge — don't query endlessly; stop once you can answer."
 )
 
 
@@ -479,9 +658,11 @@ COACH_TOOLS = [
 
 
 def build_coach_history(
-    messages: list[dict], profile: dict, period: str | None = None
+    messages: list[dict], profile: dict, period: str | None = None, lang: str = "zh"
 ) -> list[dict]:
     profile_lines = [
+        f"- 身高: {profile.get('heightCm', 170)} 公分",
+        f"- 體重: {profile.get('weightKg', 65)} 公斤",
         f"- 家庭人數: {profile.get('householdSize', 1)}",
         f"- 是否常替他人購買: {profile.get('buysForOthers', 'occasionally')}",
         f"- 一餐典型份量: {profile.get('typicalMealServings', 1)}",
@@ -491,7 +672,9 @@ def build_coach_history(
         profile_lines.append(
             f"- 目前資料期間（使用者說的「這個月」）: {period}"
         )
-    system = COACH_SYSTEM + "\n\n使用者飲食 Profile：\n" + "\n".join(profile_lines)
+    base = COACH_SYSTEM_EN if lang == "en" else COACH_SYSTEM
+    header = "\n\nUser dietary profile:\n" if lang == "en" else "\n\n使用者飲食 Profile：\n"
+    system = base + header + "\n".join(profile_lines)
     return [{"role": "system", "content": system}, *messages]
 
 
@@ -522,6 +705,7 @@ SCOPE_CHECK_SYSTEM = (
     "OUT：其他任何事情，包含但不限於：寫程式/程式碼/debug/演算法、"
     "解釋技術概念、其他領域的知識問答、跟飲食完全無關的閒聊或請求——即使"
     "使用者說『只是問問』『順便問』也一樣算 OUT。\n"
+    "使用者的訊息可能是中文或英文，判斷標準一樣。\n"
     "只回答一個英文單字 IN 或 OUT，不要有任何其他文字、標點、解釋或程式碼。"
 )
 
@@ -529,6 +713,12 @@ OUT_OF_SCOPE_REPLY = (
     "這個問題不在我能回答的範圍內喔～我只負責查你的飲食/購買發票資料庫、"
     "聊飲食習慣或健康建議。要不要問問我「這個月都買了什麼」「含糖飲料喝多"
     "少」之類的問題？"
+)
+
+OUT_OF_SCOPE_REPLY_EN = (
+    "That's outside what I can help with — I only look at your dietary / purchase "
+    "invoice database and chat about eating habits or health tips. Try asking me "
+    'something like "what did I buy this month" or "how many sugary drinks did I have".'
 )
 
 
@@ -568,9 +758,11 @@ async def ask_chat(req: ChatRequest, request: Request):
             # 的主流程照常跑，該失敗的話會在那邊回報真正的錯誤原因。
             in_scope = True
         if not in_scope:
-            return {"answer": OUT_OF_SCOPE_REPLY}
+            return {
+                "answer": OUT_OF_SCOPE_REPLY_EN if req.lang == "en" else OUT_OF_SCOPE_REPLY
+            }
 
-    history = build_coach_history(req.messages, req.profile, req.period)
+    history = build_coach_history(req.messages, req.profile, req.period, req.lang)
 
     async def once() -> dict:
         payload = {
@@ -587,6 +779,8 @@ async def ask_chat(req: ChatRequest, request: Request):
         # 底下每一次呼叫都失敗。
         if req.modelConfig.get("provider") == "local":
             payload.update(REASONING_KWARGS)
+        elif req.modelConfig.get("provider") == "google":
+            payload["reasoning_effort"] = "minimal"
         headers = {"Content-Type": "application/json", **auth_headers(api_key)}
         async with httpx.AsyncClient(timeout=TIMEOUT_SEC) as client:
             data = await post_chat_completion(client, url, headers, payload)
@@ -608,10 +802,12 @@ async def ask_chat(req: ChatRequest, request: Request):
 
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
-            return {
-                "answer": (msg.get("content") or "").strip()
-                or "我還沒查到資料，請問你想問什麼？"
-            }
+            fallback = (
+                "I haven't pulled any data yet — what would you like to ask?"
+                if req.lang == "en"
+                else "我還沒查到資料，請問你想問什麼？"
+            )
+            return {"answer": (msg.get("content") or "").strip() or fallback}
 
         # 回傳 assistant 帶 tool_calls 的訊息（保留 reasoning 供 vllm 續接）
         assistant_msg = {
@@ -621,6 +817,10 @@ async def ask_chat(req: ChatRequest, request: Request):
         }
         if msg.get("reasoning_content"):
             assistant_msg["reasoning_content"] = msg["reasoning_content"]
+        # Gemini 3 may return a provider-specific thought signature that must
+        # be preserved when the next turn contains the tool result.
+        if msg.get("extra_content"):
+            assistant_msg["extra_content"] = msg["extra_content"]
         history.append(assistant_msg)
 
         for tc in tool_calls:
@@ -649,4 +849,3 @@ async def ask_chat(req: ChatRequest, request: Request):
     return {
         "error": f"多次查詢後仍無法給出回答（已查詢 {used_tools} 次），請重整後再試。"
     }
-

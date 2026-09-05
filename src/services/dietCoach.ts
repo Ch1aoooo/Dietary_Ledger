@@ -1,4 +1,5 @@
 import type { ModelConfig, Transaction, UserProfile } from "@/types";
+import { LANG } from "@/lib/i18n";
 
 /** AI 飲食顧問的歷史訊息 */
 export interface CoachMessage {
@@ -66,6 +67,7 @@ export async function askCoach(
         messages,
         profile,
         period,
+        lang: LANG,
         session_id: getSessionId(),
         // 整個轉發 modelConfig，不要手動列舉欄位——列舉法之前就出過一次
         // 問題：ModelConfig 加新欄位時，這裡沒跟著加，新欄位就被悄悄漏送

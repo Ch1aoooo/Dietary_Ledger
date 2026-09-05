@@ -1,5 +1,6 @@
 import type { FoodProperties, RawInvoiceRow, Transaction } from "@/types";
 import { toNum } from "@/utils/einvoiceParser";
+import { t } from "@/lib/i18n";
 
 export const PERIOD = "2026-08"; // 此 demo 的分析月份
 
@@ -83,4 +84,45 @@ export function buildTransactions(rows: RawInvoiceRow[]): Transaction[] {
   // 在不同瀏覽器/V8 版本下被任意打亂或整批反轉順序。
   out.sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
   return out;
+}
+
+/** 使用者透過「手動記錄」對話框輸入的原始資料（見 lib/store.tsx）。 */
+export interface ManualEntryInput {
+  id: string;
+  date: string; // YYYY-MM-DD
+  itemName: string;
+  amount: number;
+  unit: string;
+}
+
+/**
+ * 把手動記錄轉成 Transaction。跟 CSV 來源一樣先給中性佔位的 food/category、
+ * analysisStatus:"pending"，交給同一套 AI pipeline 判斷分類——manualConsumed
+ * 會讓 pipeline 保留使用者自己輸入的食用量，不被 AI 的估計蓋掉（見
+ * utils/modelPipeline.ts）。
+ */
+export function buildManualTransaction(entry: ManualEntryInput): Transaction {
+  return {
+    id: entry.id,
+    date: entry.date,
+    invoiceNo: "",
+    merchant: t("手動輸入"),
+    itemName: entry.itemName,
+    purchasedQty: entry.amount,
+    unitPrice: 0,
+    amount: 0,
+    isAdjustment: false,
+    food: { ...PLACEHOLDER_FOOD },
+    category: PLACEHOLDER_FOOD.category,
+    inference: undefined,
+    analysisStatus: "pending",
+    manualConsumed: { amount: entry.amount, unit: entry.unit },
+  };
+}
+
+/** 合併多個交易列表並依日期重新排序（新到舊），規則同 buildTransactions()。 */
+export function mergeAndSortTransactions(...lists: Transaction[][]): Transaction[] {
+  const merged = lists.flat();
+  merged.sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
+  return merged;
 }

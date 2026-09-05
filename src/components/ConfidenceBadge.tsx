@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 export function ConfidenceBadge({
   value,
@@ -35,7 +36,7 @@ export function LowConfidenceBadge() {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-warning/30 bg-warning/15 px-2.5 py-0.5 text-xs font-medium text-[#9a5b00]">
       <span className="h-1.5 w-1.5 rounded-full bg-warning" />
-      Low confidence
+      {t("低信心")}
     </span>
   );
 }

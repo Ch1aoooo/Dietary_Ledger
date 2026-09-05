@@ -1,16 +1,16 @@
 import type { ModelConfig, ModelProvider } from "@/types";
 
 /**
- * 模型設定：preset + localStorage 管理。
- * 已移除 "offline" provider——食品分類與攝取推估現在完全交給 AI，
- * 這裡只剩「打哪個 AI 端點」的選擇。
+ * 模型設定：preset 定義 + 預設值。實際的 localStorage 讀寫（含依使用者
+ * namespace）在 lib/store.tsx 的 AppProvider 裡（見該檔 BASE_LS_MODEL_CONFIG）。
+ * 食品分類與攝取推估現在完全交給 AI；可選本機 llama.cpp、OpenAI，
+ * 或 Google Gemini API。
  */
-
-const LS_MODEL = "dl.model.v2";
 
 export const PROVIDER_LABEL: Record<ModelProvider, string> = {
   local: "本機 / 內網模型",
   openai: "OpenAI API",
+  google: "Google Gemini API",
 };
 
 export interface ProviderPreset {
@@ -39,6 +39,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     model: "gpt-4o-mini",
     apiKey: "",
   },
+  {
+    provider: "google",
+    label: "Google Gemini（免費額度）",
+    description: "Gemini Flash-Lite，適合快速資料抽取",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.5-flash-lite",
+    apiKey: "",
+  },
 ];
 
 export const DEFAULT_MODEL_CONFIG: ModelConfig = {
@@ -47,25 +55,6 @@ export const DEFAULT_MODEL_CONFIG: ModelConfig = {
   model: "dsv4-flash",
   apiKey: "",
 };
-
-function load(): ModelConfig {
-  try {
-    const raw = localStorage.getItem(LS_MODEL);
-    if (!raw) return DEFAULT_MODEL_CONFIG;
-    const parsed = JSON.parse(raw) as Partial<ModelConfig>;
-    return { ...DEFAULT_MODEL_CONFIG, ...parsed };
-  } catch {
-    return DEFAULT_MODEL_CONFIG;
-  }
-}
-
-function save(cfg: ModelConfig) {
-  try {
-    localStorage.setItem(LS_MODEL, JSON.stringify(cfg));
-  } catch {
-    /* ignore quota */
-  }
-}
 
 /**
  * 套用一個 provider preset。
@@ -87,5 +76,3 @@ export function applyPreset(cfg: ModelConfig, preset: ProviderPreset): ModelConf
     apiKey: preset.apiKey,
   };
 }
-
-export const modelConfigStore = { load, save };

@@ -6,11 +6,13 @@ import { useApp } from "@/lib/store";
 import { askCoach, loadCoachData, type CoachMessage } from "@/services/dietCoach";
 import { Markdown } from "@/components/Markdown";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 
 const WELCOME: CoachMessage = {
   role: "assistant",
-  content:
-    "嗨！我是你的 AI 飲食顧問 👋 我可以直接查你今天上傳的發票資料，回答像是\n「我這個月含糖飲料喝得多嗎？」「我最常在哪家買吃的？」「咖啡攝取有沒有變多？」\n需要我幫你分析看看嗎？",
+  content: t(
+    "嗨！我是你的 AI 飲食顧問 👋 我可以直接查你今天上傳的發票資料，回答像是\n「我這個月含糖飲料喝得多嗎？」「我最常在哪家買吃的？」「咖啡攝取有沒有變多？」\n需要我幫你分析看看嗎？"
+  ),
 };
 
 export function DietCoach() {
@@ -97,9 +99,9 @@ export function DietCoach() {
         ...m,
         {
           role: "assistant",
-          content: `⚠️ AI 顧問暫時連不上：${
-            err instanceof Error ? err.message : String(err)
-          }。請確認後端與模型已啟動。`,
+          content: `⚠️ ${t("AI 顧問暫時連不上：{msg}。請確認後端與模型已啟動。", {
+            msg: err instanceof Error ? err.message : String(err),
+          })}`,
         },
       ]);
     } finally {
@@ -112,7 +114,7 @@ export function DietCoach() {
       {/* 右下角浮動按鈕 */}
       <button
         onClick={() => setOpen((o) => !o)}
-        title="AI 飲食顧問"
+        title={t("AI 飲食顧問")}
         aria-expanded={open}
         className={cn(
           "fixed bottom-6 right-6 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105",
@@ -130,7 +132,7 @@ export function DietCoach() {
       */}
       <div
         role="dialog"
-        aria-label="AI 飲食顧問"
+        aria-label={t("AI 飲食顧問")}
         aria-hidden={!open}
         className={cn(
           "fixed bottom-24 right-6 z-40 flex h-[min(70vh,600px)] w-[min(92vw,400px)] origin-bottom-right flex-col overflow-hidden rounded-2xl border border-border/70 bg-card shadow-2xl transition-all duration-200 ease-out",
@@ -142,15 +144,15 @@ export function DietCoach() {
         <div className="flex items-start justify-between gap-2 border-b border-border/70 px-5 py-4">
           <div>
             <p className="flex items-center gap-2 font-display text-base font-semibold text-foreground">
-              <Sparkles className="h-4 w-4 text-tealink" /> AI 飲食顧問
+              <Sparkles className="h-4 w-4 text-tealink" /> {t("AI 飲食顧問")}
             </p>
             <div className="mt-1 flex items-center justify-between gap-2">
               <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 {dataReady ? (
-                  "直接問，我會查你的發票資料回答"
+                  t("直接問，我會查你的發票資料回答")
                 ) : (
                   <>
-                    <RefreshCw className="h-3 w-3 animate-spin" /> 同步最新發票資料中…
+                    <RefreshCw className="h-3 w-3 animate-spin" /> {t("同步最新發票資料中…")}
                   </>
                 )}
               </p>
@@ -161,14 +163,14 @@ export function DietCoach() {
                 onClick={() => setMessages([WELCOME])}
                 disabled={busy || messages.length <= 1}
               >
-                <RotateCcw className="h-3.5 w-3.5" /> 清除對話
+                <RotateCcw className="h-3.5 w-3.5" /> {t("清除對話")}
               </Button>
             </div>
           </div>
           <button
             onClick={() => setOpen(false)}
-            title="關閉"
-            aria-label="關閉"
+            title={t("關閉")}
+            aria-label={t("關閉")}
             className="rounded-sm p-1 text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:opacity-100"
           >
             <X className="h-4 w-4" />
@@ -204,7 +206,7 @@ export function DietCoach() {
           {busy && (
             <div className="flex justify-start">
               <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-muted/40 px-3.5 py-2.5 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> 顧問思考中…
+                <Loader2 className="h-4 w-4 animate-spin" /> {t("顧問思考中…")}
               </div>
             </div>
           )}
@@ -216,12 +218,19 @@ export function DietCoach() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              // 中文（注音/拼音等）輸入法選字時按 Enter 是「確認候選字」，
+              // 這個按鍵事件在瀏覽器裡還是會有 key==="Enter"，如果沒有排除
+              // composing 狀態，選字的那次 Enter 會被這裡誤判成「送出」：
+              // send() 當下讀到的是選字還沒真正寫進輸入框前的舊值、清空
+              // input 後，輸入法緊接著才把剛選好的字補進框裡，畫面上就變成
+              // 「送出後文字還留在框裡」。用 isComposing 擋掉輸入法選字
+              // 過程中的 Enter，只有真的送出意圖（選字已完成）才觸發。
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
               }
             }}
-            placeholder={dataReady ? "問我你的飲食…" : "同步資料中，稍等一下…"}
+            placeholder={dataReady ? t("問我你的飲食…") : t("同步資料中，稍等一下…")}
             className="h-10"
             disabled={!open || !dataReady}
             tabIndex={open ? 0 : -1}

@@ -35,6 +35,24 @@ export interface FoodProperties {
  */
 export type AnalysisStatus = "pending" | "ready" | "failed";
 
+/**
+ * 單筆食品的粗估營養屬性——AI 依品名/店家/常見作法推估，不是查營養資料庫
+ * 得來的精確值（見 backend/main.py 的 SYSTEM_PROMPT）。只有 food.isFood
+ * 為 true 的列才有意義；non-food 列這裡固定是中性預設值。
+ */
+export interface NutritionEstimate {
+  /** 「本人實際食用量」對應的粗估熱量（大卡），不是購買量的熱量。 */
+  estimatedCalories: number;
+  /** 是否含精緻澱粉（白飯、白麵包、含糖甜點等精製碳水）。 */
+  isRefinedCarb: boolean;
+  /** 是否為原型食物（未經高度加工）。 */
+  isWholeFood: boolean;
+  /** 升糖指數等級。 */
+  giLevel: "high" | "medium" | "low";
+  /** 是否為油炸類。 */
+  isFried: boolean;
+}
+
 export interface Inference {
   /** 推估本人實際食用的份量 */
   estimatedSelfConsumed: number;
@@ -80,8 +98,19 @@ export interface Transaction {
   isAdjustment: boolean;
   food: FoodProperties;
   inference?: Inference;
+  /** 粗估營養屬性，見 NutritionEstimate 說明；跟 food/inference 一樣，
+   *  AI 分析完成（analysisStatus:"ready"）前不存在。 */
+  nutrition?: NutritionEstimate;
   category: FoodCategory;
   analysisStatus: AnalysisStatus;
+  /**
+   * 使用者透過「手動記錄」（見 components/AddManualEntryDialog.tsx）直接
+   * 輸入的實際食用量與單位——不是來自發票。這筆存在時，AI 分析只用來
+   * 判斷 category/stockable 這些分類屬性，estimatedSelfConsumed 一律採用
+   * 這裡的值，不會被 AI 自己的推估蓋掉（見 utils/modelPipeline.ts）：
+   * 使用者直接回報「吃了多少」，比 AI 用購買量去猜更準確。
+   */
+  manualConsumed?: { amount: number; unit: string };
 }
 
 export interface ReviewItem {
@@ -110,6 +139,10 @@ export interface ReviewItem {
 }
 
 export interface UserProfile {
+  /** 身高（公分）——AI 推估份量大小時的參考依據，見 backend/main.py。 */
+  heightCm: number;
+  /** 體重（公斤）——同上。 */
+  weightKg: number;
   householdSize: number;
   buysForOthers: "almost_never" | "occasionally" | "often";
   typicalMealServings: number;
@@ -182,7 +215,7 @@ export interface ClinicalSummary {
  * 回答不準、決定不用，已整個移除（型別、preset、Settings 欄位、後端的
  * URL/認證邏輯都拔掉了），不要再加回來。
  */
-export type ModelProvider = "local" | "openai";
+export type ModelProvider = "local" | "openai" | "google";
 
 /** 使用者可設定的模型設定 */
 export interface ModelConfig {
@@ -213,6 +246,11 @@ export interface ModelItemAnalysis {
   stockable: boolean;
   shelfLife: FoodProperties["shelfLife"];
   typicalUnit: string | null;
+  estimatedCalories: number | null;
+  isRefinedCarb: boolean;
+  isWholeFood: boolean;
+  giLevel: NutritionEstimate["giLevel"];
+  isFried: boolean;
   estimatedSelfConsumed: number | null;
   distributionDays: number | null;
   confidence: number;

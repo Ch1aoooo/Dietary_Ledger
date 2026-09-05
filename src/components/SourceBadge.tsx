@@ -1,10 +1,11 @@
 import type { Source } from "@/types";
 import { Badge } from "@/components/ui/badge";
+import { t } from "@/lib/i18n";
 
 const SOURCE_LABEL: Record<Source, string> = {
-  observed: "Observed",
-  inferred: "Inferred",
-  user_confirmed: "User Confirmed",
+  observed: t("直接紀錄"),
+  inferred: t("模型推估"),
+  user_confirmed: t("使用者確認"),
 };
 
 const SOURCE_VARIANT: Record<Source, "observed" | "inferred" | "confirmed"> = {

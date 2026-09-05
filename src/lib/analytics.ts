@@ -9,6 +9,7 @@ import type {
   UserProfile,
   WeeklyPoint,
 } from "@/types";
+import { t as tr } from "@/lib/i18n";
 
 /** 使用者確認覆寫後的實際食用量解析 */
 export function resolveEstimate(tx: Transaction): number {
@@ -54,15 +55,33 @@ function foodTransactions(transactions: Transaction[]): Transaction[] {
   return transactions.filter((t) => t.food.isFood);
 }
 
-const WEEK_BUCKETS: { label: string; from: number; to: number }[] = [
-  { label: "Week 1", from: 1, to: 7 },
-  { label: "Week 2", from: 8, to: 14 },
-  { label: "Week 3", from: 15, to: 21 },
-  { label: "Week 4", from: 22, to: 31 },
-];
+const DAY_MS = 86_400_000;
 
-function dayOf(tx: Transaction): number {
-  return parseInt(tx.date.slice(8, 10), 10) || 0;
+/**
+ * 資料實際涵蓋的週數與起算點。以「最早一筆食品紀錄的日期」為第 1 週的
+ * 第一天，之後每 7 天算一週，總週數用「涵蓋天數 / 7 四捨五入」——所以
+ * 單一月份 ≈ 4 週、橫跨兩個月 ≈ 8 週，趨勢圖 x 軸會跟著資料範圍縮放，
+ * 不再永遠固定 4 週（見 computeWeekly）。結尾不滿一週的幾天併入最後一週。
+ * 沒有任何食品紀錄時回傳 0 週。
+ */
+function weekSpan(foods: Transaction[]): { start: number; weeks: number } {
+  if (!foods.length) return { start: 0, weeks: 0 };
+  let min = foods[0].date;
+  let max = foods[0].date;
+  for (const t of foods) {
+    if (t.date < min) min = t.date;
+    if (t.date > max) max = t.date;
+  }
+  const start = Date.parse(`${min}T00:00:00`);
+  const end = Date.parse(`${max}T00:00:00`);
+  const weeks = Math.max(1, Math.round((end - start) / DAY_MS / 7));
+  return { start, weeks };
+}
+
+/** 把某一天分進第幾週（0-based），結尾多出來的幾天併進最後一週。 */
+function weekIndexOf(dateIso: string, start: number, weeks: number): number {
+  const wi = Math.floor((Date.parse(`${dateIso}T00:00:00`) - start) / DAY_MS / 7);
+  return Math.min(weeks - 1, Math.max(0, wi));
 }
 
 export function computeKpis(
@@ -114,21 +133,28 @@ export function computeWeekly(
   reviews: ReviewItem[]
 ): WeeklyPoint[] {
   const all = applyReviews(transactions, reviews);
+  const foods = foodTransactions(all);
+  const { start, weeks } = weekSpan(foods);
+  if (!weeks) return [];
+
   const approx = (n: number) => Math.round(n * 10) / 10;
   const focus = ["Coffee", "Sugary beverages", "Prepared meals", "Bakery"];
-  return WEEK_BUCKETS.map((b) => {
-    const point: WeeklyPoint = { week: b.label };
-    for (const cat of focus) {
-      let sum = 0;
-      for (const t of all) {
-        if (!t.food.isFood || t.food.category !== cat) continue;
-        const d = dayOf(t);
-        if (d >= b.from && d <= b.to) sum += resolveEstimate(t);
-      }
-      point[cat] = approx(sum);
-    }
-    return point;
+
+  const points: WeeklyPoint[] = Array.from({ length: weeks }, (_, i) => {
+    const p: WeeklyPoint = { week: tr("第 {n} 週", { n: i + 1 }) };
+    for (const cat of focus) p[cat] = 0;
+    return p;
   });
+  for (const t of foods) {
+    const cat = t.food.category;
+    if (!focus.includes(cat)) continue;
+    const wi = weekIndexOf(t.date, start, weeks);
+    points[wi][cat] = (Number(points[wi][cat]) || 0) + resolveEstimate(t);
+  }
+  for (const p of points) {
+    for (const cat of focus) p[cat] = approx(Number(p[cat]));
+  }
+  return points;
 }
 
 export function buildInsights(
@@ -139,55 +165,118 @@ export function buildInsights(
   const foods = foodTransactions(all);
   const insights: Insight[] = [];
 
+  const { weeks } = weekSpan(foods);
+
   // 咖啡週頻率
   const coffee = foods.filter((t) => t.food.category === "Coffee");
   const coffeeSum = coffee.reduce((s, t) => s + resolveEstimate(t), 0);
   insights.push({
-    title: "咖啡攝取頻率",
-    body: `本月咖啡相關攝取估計約每週 ${(coffeeSum / 4).toFixed(1)} 次。`,
+    title: tr("咖啡攝取頻率"),
+    body: tr("咖啡相關攝取估計約每週 {n} 次。", {
+      n: (weeks ? coffeeSum / weeks : 0).toFixed(1),
+    }),
     tone: "neutral",
   });
 
-  // 含糖飲料週趨勢
-  // WEEK_BUCKETS 的天數並不平均（7/7/7/10），直接比較前兩週 vs 後兩週的
-  // 「加總」會系統性偏向後半（後半天數本來就比較多），導致就算每天攝取量
-  // 完全沒變，也會被誤判成「上升」。改成比較「平均每天」才公平。
+  // 含糖飲料趨勢：把整個資料期間切成前半 / 後半，比較「平均每天」的攝取量
+  // （直接比加總會偏向天數較多的那半）。週數不固定（見 weekSpan），所以
+  // 用週數 * 7 當分母換算成每天。
   const sug = computeWeekly(transactions, reviews);
   const sweet = sug.map((w) => Number(w["Sugary beverages"] ?? 0));
   if (sweet.length >= 2) {
-    const bucketDays = WEEK_BUCKETS.map((b) => b.to - b.from + 1);
-    const firstDays = bucketDays[0] + bucketDays[1];
-    const lastDays = bucketDays[2] + bucketDays[3];
-    const firstAvg = firstDays ? (sweet[0] + sweet[1]) / firstDays : 0;
-    const lastAvg = lastDays ? (sweet[2] + sweet[3]) / lastDays : 0;
-    const dir = lastAvg > firstAvg ? "上升" : lastAvg < firstAvg ? "下降" : "持平";
+    const mid = Math.floor(sweet.length / 2);
+    const firstHalf = sweet.slice(0, mid);
+    const lastHalf = sweet.slice(mid);
+    const dayAvg = (arr: number[]) =>
+      arr.length ? arr.reduce((s, n) => s + n, 0) / (arr.length * 7) : 0;
+    const firstAvg = dayAvg(firstHalf);
+    const lastAvg = dayAvg(lastHalf);
+    const dir =
+      lastAvg > firstAvg ? tr("上升") : lastAvg < firstAvg ? tr("下降") : tr("持平");
     insights.push({
-      title: "含糖飲料週趨勢",
-      body: `含糖飲料推估攝取量在月中後半${dir}（前半平均每天約 ${firstAvg.toFixed(1)} 次，後半平均每天約 ${lastAvg.toFixed(1)} 次）。`,
+      title: tr("含糖飲料週趨勢"),
+      body: tr(
+        "含糖飲料推估攝取量在後半段{dir}（前半平均每天約 {a} 次，後半平均每天約 {b} 次）。",
+        { dir, a: firstAvg.toFixed(1), b: lastAvg.toFixed(1) }
+      ),
       tone: lastAvg > firstAvg ? "watch" : "neutral",
     });
   }
 
-  // 大量購買調整
-  const bulk = foods.filter((t) => t.inference && t.purchasedQty - resolveEstimate(t) >= 2);
-  if (bulk.length) {
+  // 以下四項是 AI 對食物本身營養屬性的粗估（見 backend/main.py 的
+  // estimatedCalories/isRefinedCarb/isWholeFood/giLevel/isFried——
+  // estimatedCalories 目前沒有對應的 insight，欄位留著給未來用），不是
+  // 查營養資料庫得來的精確值，只在有食品紀錄時才顯示。
+  if (foods.length) {
+    // 精緻澱粉
+    const refinedCount = foods.filter((t) => t.nutrition?.isRefinedCarb).length;
+    const refinedPct = Math.round((refinedCount / foods.length) * 100);
     insights.push({
-      title: "大量購買已做個人化調整",
-      body: `${bulk.length} 筆購買量明顯大於個人典型份量的紀錄，經模型判斷可能屬多人共享／囤貨，已納入個人化消費歸因。`,
-      tone: "neutral",
+      title: tr("精緻澱粉比例"),
+      body: tr(
+        "{n} 筆紀錄（約 {pct}%）屬於精緻澱粉（白飯、白麵包、含糖甜點等精製碳水）。{tail}",
+        {
+          n: refinedCount,
+          pct: refinedPct,
+          tail:
+            refinedPct >= 50
+              ? tr("比例偏高，建議適度替換成糙米、全麥等全穀雜糧。")
+              : tr("比例在合理範圍內。"),
+        }
+      ),
+      tone: refinedPct >= 50 ? "watch" : "neutral",
     });
-  }
 
-  // 集中於特定日期
-  const byDay = new Map<string, number>();
-  for (const t of foods) byDay.set(t.date, (byDay.get(t.date) ?? 0) + 1);
-  const max = Math.max(...Array.from(byDay.values()));
-  if (max >= 3) {
-    const day = Array.from(byDay.entries()).find(([, v]) => v === max)![0];
+    // 原型食物
+    const wholeCount = foods.filter((t) => t.nutrition?.isWholeFood).length;
+    const wholePct = Math.round((wholeCount / foods.length) * 100);
     insights.push({
-      title: "購買集中度",
-      body: `食品購買集中於特定日期（如 ${day.slice(5)} 當日 ${max} 筆），而非平均分布在各天。`,
-      tone: "neutral",
+      title: tr("原型食物比例"),
+      body: tr(
+        "{n} 筆紀錄（約 {pct}%）屬於原型食物（未經高度加工，如新鮮蔬果、原型肉類）。{tail}",
+        {
+          n: wholeCount,
+          pct: wholePct,
+          tail:
+            wholePct < 30
+              ? tr("比例偏低，建議增加新鮮蔬果、原型蛋白質的攝取。")
+              : tr("整體攝取型態尚可。"),
+        }
+      ),
+      tone: wholePct < 30 ? "watch" : "neutral",
+    });
+
+    // 升糖指數
+    const highGiCount = foods.filter((t) => t.nutrition?.giLevel === "high").length;
+    const highGiPct = Math.round((highGiCount / foods.length) * 100);
+    insights.push({
+      title: tr("高 GI 食物比例"),
+      body: tr("{n} 筆紀錄（約 {pct}%）屬於高升糖指數食物。{tail}", {
+        n: highGiCount,
+        pct: highGiPct,
+        tail:
+          highGiPct >= 40
+            ? tr("比例偏高，建議搭配蛋白質或蔬菜一起食用，有助平緩血糖波動。")
+            : tr("比例在合理範圍內。"),
+      }),
+      tone: highGiPct >= 40 ? "watch" : "neutral",
+    });
+
+    // 油炸類
+    const friedCount = foods.filter((t) => t.nutrition?.isFried).length;
+    insights.push({
+      title: tr("油炸類攝取"),
+      body:
+        friedCount === 0
+          ? tr("本區間沒有偵測到油炸類食物紀錄。")
+          : tr("本區間共 {n} 筆紀錄屬於油炸類食物。{tail}", {
+              n: friedCount,
+              tail:
+                friedCount >= 4
+                  ? tr("頻率偏高，建議減少油炸、改以蒸煮或烘烤方式為主。")
+                  : tr("頻率在合理範圍內。"),
+            }),
+      tone: friedCount >= 4 ? "watch" : "neutral",
     });
   }
 
@@ -212,12 +301,12 @@ export function buildClinicalSummary(
   transactions: Transaction[],
   reviews: ReviewItem[],
   period: string,
-  patient: string = "Demo User"
+  patient: string = tr("示範使用者")
 ): ClinicalSummary {
   const all = applyReviews(transactions, reviews);
   const foods = foodTransactions(all);
 
-  const weeks = 4;
+  const weeks = Math.max(1, weekSpan(foods).weeks);
   const catFreq: Record<string, number> = {};
   for (const t of foods) {
     catFreq[t.food.category] = (catFreq[t.food.category] ?? 0) + resolveEstimate(t);
@@ -246,14 +335,12 @@ export function buildClinicalSummary(
   const pctInferred = Math.max(0, 100 - pctHigh - pctConfirmed);
 
   const observedPatterns: string[] = [];
-  if (catFreq["Coffee"]) observedPatterns.push("Recurrent coffee purchases");
-  if (catFreq["Prepared meals"]) observedPatterns.push("Frequent prepared-food purchases");
-  if (catFreq["Sugary beverages"]) observedPatterns.push("Several sweetened beverage records");
+  if (catFreq["Coffee"]) observedPatterns.push(tr("經常購買咖啡"));
+  if (catFreq["Prepared meals"]) observedPatterns.push(tr("經常購買調理食品"));
+  if (catFreq["Sugary beverages"]) observedPatterns.push(tr("多筆含糖飲料紀錄"));
   const bulk = foods.filter((t) => t.inference && t.purchasedQty - resolveEstimate(t) >= 2);
   if (bulk.length)
-    observedPatterns.push(
-      "Multiple bulk purchases were adjusted using personalized consumption attribution"
-    );
+    observedPatterns.push(tr("多筆大量採購已依個人消費歸屬調整"));
 
   return {
     patient,
@@ -267,11 +354,11 @@ export function buildClinicalSummary(
     },
     hasLongitudinal: false,
     limitations: [
-      "Purchase does not necessarily equal actual intake.",
-      "Shared purchases may not always be identifiable.",
-      "Food waste cannot be directly observed.",
-      "The current electronic invoice dataset does not contain exact meal time.",
-      "Dietary estimates should be treated as supplementary information, not clinical diagnosis.",
+      tr("購買不等於實際攝取。"),
+      tr("共同購買不一定能被辨識。"),
+      tr("食物浪費無法直接觀察。"),
+      tr("目前的電子發票資料不含確切用餐時間。"),
+      tr("飲食推估僅供輔助參考，不作為臨床診斷。"),
     ],
   };
 }

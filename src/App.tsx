@@ -7,7 +7,6 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Transactions } from "@/pages/Transactions";
 import { Review } from "@/pages/Review";
 import { DietaryProfile } from "@/pages/DietaryProfile";
-import { ClinicalSummary } from "@/pages/ClinicalSummary";
 import { Settings } from "@/pages/Settings";
 
 export default function App() {
@@ -31,7 +30,6 @@ export default function App() {
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/review" element={<Review />} />
         <Route path="/profile" element={<DietaryProfile />} />
-        <Route path="/clinical" element={<ClinicalSummary />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

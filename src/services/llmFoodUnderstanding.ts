@@ -1,4 +1,5 @@
 import type { ModelConfig, ModelItemAnalysis, UserProfile } from "@/types";
+import { LANG } from "@/lib/i18n";
 
 /**
  * 批次呼叫後端薄代理 /api/understand/batch。
@@ -28,6 +29,7 @@ export async function batchUnderstand(
       body: JSON.stringify({
         items,
         profile,
+        lang: LANG,
         // 整個轉發 modelConfig，不要手動列舉欄位（同樣的原因見
         // services/dietCoach.ts 的說明）。
         modelConfig: {

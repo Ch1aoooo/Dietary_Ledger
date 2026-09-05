@@ -117,6 +117,43 @@ export function parseEInvoiceCSV(text: string): RawInvoiceRow[] {
 
 export { toNum };
 
+/**
+ * 使用者可能會分批上傳好幾份 CSV（例如每個月匯出一次，範圍卻互相重疊）。
+ * 這裡把所有批次的原始列取聯集：日期、賣方（統編+名稱）、品名、單價、
+ * 數量五個欄位完全一致才視為重複——只要其中一項不同（例如同一天同一家
+ * 店買了兩份一模一樣單價但數量不同的品項），就不是重複，兩筆都保留。
+ *
+ * 個別批次如果解析失敗（例如 localStorage 裡殘留了損壞的資料），跳過那
+ * 一批就好，不要讓整個聯集因為一份壞掉的檔案而整個掛掉——上傳當下
+ * pages/Upload.tsx 已經先驗證過一次，這裡的 try/catch 純粹是保底。
+ */
+export function mergeAndDedupeRows(batches: string[]): RawInvoiceRow[] {
+  const seen = new Set<string>();
+  const out: RawInvoiceRow[] = [];
+  for (const text of batches) {
+    let rows: RawInvoiceRow[];
+    try {
+      rows = parseEInvoiceCSV(text);
+    } catch {
+      continue;
+    }
+    for (const r of rows) {
+      const key = [
+        r.date.trim(),
+        r.sellerId.trim(),
+        r.sellerName.trim(),
+        r.itemName.trim(),
+        toNum(r.unitPrice),
+        toNum(r.qty),
+      ].join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+  }
+  return out;
+}
+
 /** 驗證是否為統一發票 CSV（檢查表頭是否含關鍵欄位） */
 export function looksLikeInvoiceCsv(text: string): boolean {
   const head = text.slice(0, 600).replace(/^\uFEFF/, "");

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { t } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
 import { parseEInvoiceCSV, looksLikeInvoiceCsv } from "@/utils/einvoiceParser";
 import { detectAdjustment } from "@/utils/processing";
@@ -21,12 +22,12 @@ import { detectAdjustment } from "@/utils/processing";
 type Phase = "drop" | "preview" | "processing" | "done";
 
 const PROCESSING_STEPS = [
-  "解析電子發票",
-  "清理商品紀錄",
-  "送交 AI 理解食品內容",
-  "推估個人實際攝取",
-  "計算信心分數",
-  "更新飲食 Profile",
+  t("解析電子發票"),
+  t("清理商品紀錄"),
+  t("送交 AI 理解食品內容"),
+  t("推估個人實際攝取"),
+  t("計算信心分數"),
+  t("更新飲食檔案"),
 ];
 
 interface Preview {
@@ -51,7 +52,7 @@ export function Upload() {
   function handleText(text: string) {
     setError(null);
     if (!looksLikeInvoiceCsv(text)) {
-      setError("無法辨識為電子發票 CSV 格式，請確認是從財政部載具平台匯出的檔案。");
+      setError(t("無法辨識為電子發票 CSV 格式，請確認是從財政部載具平台匯出的檔案。"));
       setPhase("drop");
       return;
     }
@@ -74,7 +75,7 @@ export function Upload() {
 
   function onFile(file: File) {
     if (file.name.toLowerCase().endsWith(".xlsx")) {
-      setError("目前 demo 支援 CSV 格式；XLSX 轉檔支援即將開放。請匯出為 CSV 後再上傳。");
+      setError(t("目前僅支援 CSV 格式，XLSX 轉檔支援即將開放。請匯出為 CSV 後再上傳。"));
       setPhase("drop");
       return;
     }
@@ -99,7 +100,6 @@ export function Upload() {
     return () => clearTimeout(t);
   }, [phase, step]);
 
-  const periodLabel = "August 2026";
   const needReviewCount = reviews.filter((r) => r.confirmed == null).length;
 
   return (
@@ -107,11 +107,10 @@ export function Upload() {
       {/* Hero */}
       <div className="py-6 text-center md:py-10">
         <h1 className="font-display text-3xl font-semibold leading-tight tracking-tight text-foreground md:text-4xl">
-          讓你的消費紀錄，成為長期健康資料的一部分
+          {t("讓你的消費紀錄，成為長期健康資料的一部分")}
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-[15px] leading-relaxed text-muted-foreground">
-          上傳電子發票載具紀錄，將日常食品消費轉換為個人化飲食 Profile，
-          協助你與醫療人員更完整地了解長期飲食行為。
+          {t("上傳電子發票載具紀錄，將日常食品消費轉換為個人化飲食檔案， 協助你與醫療人員更完整地了解長期飲食行為。")}
         </p>
       </div>
 
@@ -150,23 +149,23 @@ export function Upload() {
               <UploadCloud className="h-7 w-7" />
             </div>
             <h2 className="font-display mt-5 text-lg font-semibold text-foreground">
-              上傳電子發票 CSV / Excel
+              {t("上傳電子發票 CSV / Excel")}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              拖曳檔案到此處，或點擊選擇檔案
+              {t("拖曳檔案到此處，或點擊選擇檔案")}
             </p>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">
-                <FileSpreadsheet className="h-3.5 w-3.5" /> 支援 CSV / XLSX
+                <FileSpreadsheet className="h-3.5 w-3.5" /> {t("支援 CSV / XLSX")}
               </span>
               <span className="flex items-center gap-1.5">
-                <ShieldCheck className="h-3.5 w-3.5" /> 資料僅在本機分析
+                <ShieldCheck className="h-3.5 w-3.5" /> {t("資料僅在本機分析")}
               </span>
               <span className="flex items-center gap-1.5">
-                <CalendarDays className="h-3.5 w-3.5" /> 每月新增一次
+                <CalendarDays className="h-3.5 w-3.5" /> {t("每月新增一次")}
               </span>
               <span className="flex items-center gap-1.5">
-                <Info className="h-3.5 w-3.5" /> 購買 ≠ 實際攝取
+                <Info className="h-3.5 w-3.5" /> {t("購買 ≠ 實際攝取")}
               </span>
             </div>
           </div>
@@ -179,7 +178,7 @@ export function Upload() {
 
           <div className="mt-5 text-center">
             <Button variant="ghost" onClick={() => handleText(sampleText())}>
-              沒有檔案？載入範例資料試試
+              {t("沒有檔案？載入範例資料試試")}
             </Button>
           </div>
         </>
@@ -187,19 +186,19 @@ export function Upload() {
 
       {phase === "preview" && preview && (
         <Card className="p-7">
-          <h3 className="font-display text-lg font-semibold text-foreground">本月讀取</h3>
+          <h3 className="font-display text-lg font-semibold text-foreground">{t("本月讀取")}</h3>
           <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat v={preview.invoices} l="張發票" />
-            <Stat v={preview.records} l="筆商品紀錄" />
-            <Stat v={preview.toAnalyze} l="將送交 AI 分析" accent />
-            <Stat v={preview.skipped} l="折扣/異常列（略過）" />
+            <Stat v={preview.invoices} l={t("張發票")} />
+            <Stat v={preview.records} l={t("筆商品紀錄")} />
+            <Stat v={preview.toAnalyze} l={t("將送交 AI 分析")} accent />
+            <Stat v={preview.skipped} l={t("折扣/異常列（略過）")} />
           </div>
           <div className="mt-6 flex items-center justify-between">
             <Button variant="ghost" onClick={() => setPhase("drop")}>
-              重新上傳
+              {t("重新上傳")}
             </Button>
             <Button size="lg" onClick={startAnalysis} className="gap-2">
-              <Sparkles className="h-4 w-4" /> 開始分析
+              <Sparkles className="h-4 w-4" /> {t("開始分析")}
             </Button>
           </div>
         </Card>
@@ -209,8 +208,8 @@ export function Upload() {
         <Card className="p-8">
           <div className="mb-6 flex items-center justify-between">
             <div>
-              <h3 className="font-display text-lg font-semibold text-foreground">正在分析</h3>
-              <p className="text-sm text-muted-foreground">AI 正在理解你的消費紀錄</p>
+              <h3 className="font-display text-lg font-semibold text-foreground">{t("正在分析")}</h3>
+              <p className="text-sm text-muted-foreground">{t("AI 正在理解你的消費紀錄")}</p>
             </div>
             <Sparkles className="h-5 w-5 animate-pulse text-tealink" />
           </div>
@@ -249,10 +248,10 @@ export function Upload() {
             <Check className="h-7 w-7" />
           </div>
           <h3 className="font-display mt-5 text-2xl font-semibold text-foreground">
-            {periodLabel} 分析完成
+            {t("上傳資料分析完成")}
           </h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            AI 正在背景為這些紀錄做食品分類與個人化消費歸因，完成後即可在本月分析看到結果。
+            {t("AI 正在背景為這些紀錄做食品分類與個人化消費歸因，完成後即可在本月分析看到結果。")}
           </p>
           {/*
             這幾個數字原本是寫死的「- 3」「3 筆」，且沿用上傳前用離線規則
@@ -263,19 +262,19 @@ export function Upload() {
             清單留給 reviews 狀態自己更新。
           */}
           <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Stat v={preview.records} l="商品紀錄" />
-            <Stat v={preview.toAnalyze} l="送交 AI 分析" accent />
-            <Stat v={preview.skipped} l="折扣/異常列（略過）" />
+            <Stat v={preview.records} l={t("商品紀錄")} />
+            <Stat v={preview.toAnalyze} l={t("送交 AI 分析")} accent />
+            <Stat v={preview.skipped} l={t("折扣/異常列（略過）")} />
           </div>
           {needReviewCount > 0 && (
             <p className="mt-4 text-sm text-muted-foreground">
-              目前已有 <span className="font-semibold text-warning">{needReviewCount} 筆</span> 低信心紀錄建議你確認
+              {t("目前已有 {n} 筆低信心紀錄建議你確認", { n: needReviewCount })}
             </p>
           )}
           <div className="mt-7">
             <Button size="lg" asChild className="gap-2">
               <Link to="/">
-                查看本月分析 <ArrowRight className="h-4 w-4" />
+                {t("查看本月分析")} <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
           </div>
