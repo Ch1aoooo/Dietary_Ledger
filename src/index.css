@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* 背景：偏灰白 / 淺米白 */
+    --background: 42 33% 97%;
+    --foreground: 200 12% 16%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 200 12% 16%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 200 12% 16%;
+
+    /* Primary：深藍綠 (deep teal) */
+    --primary: 184 58% 15%;
+    --primary-foreground: 170 40% 97%;
+
+    /* Secondary：低飽和綠 */
+    --secondary: 152 26% 88%;
+    --secondary-foreground: 164 30% 18%;
+
+    --muted: 200 12% 93%;
+    --muted-foreground: 200 6% 45%;
+
+    --accent: 170 30% 92%;
+    --accent-foreground: 184 50% 16%;
+
+    --destructive: 0 70% 52%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 200 10% 88%;
+    --input: 200 10% 86%;
+    --ring: 184 50% 32%;
+
+    /* 資料來源語意色 */
+    --observed: 210 8% 28%;     /* 深灰 */
+    --inferred: 211 70% 42%;    /* 藍 */
+    --confirmed: 152 55% 32%;   /* 綠 */
+    --warning: 36 82% 50%;      /* 橘黃 */
+    --tealink: 170 60% 40%;
+
+    --radius: 0.9rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    letter-spacing: -0.02em;
+  }
+  .soft-shadow {
+    box-shadow: 0 1px 2px rgba(20, 40, 40, 0.04), 0 8px 24px -12px rgba(20, 40, 40, 0.18);
+  }
+}
+
+/* 細緻捲軸 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(200 8% 82%);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(200 8% 70%);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}

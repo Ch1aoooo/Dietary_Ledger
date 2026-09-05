@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSV 檢視器</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f6fa;
+    --card: #ffffff;
+    --text: #2d3436;
+    --muted: #636e72;
+    --primary: #4070f4;
+    --primary-dark: #3058d0;
+    --border: #e0e4ea;
+    --hover: #f0f2f7;
+  }
+
+  body {
+    font-family: "Segoe UI", "Microsoft JhengHei", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* 頂部工具列 */
+  .topbar {
+    display: flex;
+    justify-content: center;   /* 讓整組置中，方便設定按鈕往左移 */
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--card);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .settings-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 14px;
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .settings-btn:hover { background: var(--hover); border-color: var(--primary); }
+  .settings-btn svg { fill: var(--muted); }
+
+  /* 搜尋列（放大鏡） */
+  .search-box {
+    display: flex;
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    transition: border-color 0.2s;
+  }
+  .search-box:focus-within { border-color: var(--primary); }
+  .magnifier-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 8px;
+    color: var(--muted);
+    border-radius: 6px;
+  }
+  .magnifier-btn:hover { background: var(--hover); }
+  .search-input {
+    border: none;
+    outline: none;
+    font-size: 14px;
+    padding: 4px 6px;
+    width: 0;
+    opacity: 0;
+    transition: width 0.25s, opacity 0.25s;
+    color: var(--text);
+  }
+  .search-box.open .search-input {
+    width: 220px;
+    opacity: 1;
+  }
+  .clear-btn {
+    display: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    padding: 4px 6px;
+    font-size: 14px;
+  }
+  .clear-btn:hover { color: var(--text); }
+
+  /* 設定下拉面板 */
+  .settings-panel {
+    position: absolute;
+    top: 64px;
+    right: 20px;
+    width: 260px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    padding: 16px;
+    display: none;
+    z-index: 20;
+  }
+  .settings-panel.open { display: block; }
+  .settings-panel h3 {
+    font-size: 14px;
+    margin-bottom: 12px;
+    color: var(--muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+  }
+  .settings-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 14px;
+    transition: background 0.2s;
+  }
+  .settings-item:hover { background: var(--hover); }
+  .settings-item.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  /* 主內容區 */
+  .main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    min-height: calc(100vh - 70px);
+  }
+
+  /* 中間的上傳區 */
+  .dropzone {
+    width: 100%;
+    max-width: 560px;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    padding: 48px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--primary);
+    background: #f0f4ff;
+  }
+  .dropzone .icon { font-size: 48px; margin-bottom: 12px; }
+  .dropzone h2 { font-size: 20px; margin-bottom: 6px; }
+  .dropzone p { color: var(--muted); font-size: 14px; margin-bottom: 20px; }
+
+  .btn-upload {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 28px;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-upload:hover { background: var(--primary-dark); }
+
+  #fileInput { display: none; }
+
+  /* 結果區域 */
+  .result {
+    width: 100%;
+    max-width: 1100px;
+    margin-top: 32px;
+    display: none;
+  }
+  .result.show { display: block; }
+
+  .result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .result-header h2 { font-size: 16px; }
+  .result-header .info { color: var(--muted); font-size: 13px; }
+
+  .table-wrap {
+    overflow-x: auto;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    white-space: nowrap;
+  }
+  th {
+    background: #f0f2f7;
+    position: sticky;
+    top: 0;
+    font-weight: 600;
+  }
+  tr:nth-child(even) { background: #fafbfd; }
+  tr:hover { background: var(--hover); }
+</style>
+</head>
+<body>
+
+  <!-- 頂部工具列 -->
+  <div class="topbar">
+    <div class="settings-btn" id="settingsBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24">
+        <path d="M19.14 12.94a7.5 7.5 0 0 0 .06-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.5 7.5 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.15 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
+      </svg>
+      設定
+    </div>
+
+    <!-- 搜尋列（放大鏡） -->
+    <div class="search-box" id="searchBox">
+      <button class="magnifier-btn" id="magnifierBtn" title="搜尋">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/>
+        </svg>
+      </button>
+      <input type="text" class="search-input" id="searchInput" placeholder="搜尋表格">
+      <button class="clear-btn" id="clearBtn" title="清除">✕</button>
+    </div>
+
+    <!-- 設定面板 -->
+    <div class="settings-panel" id="settingsPanel">
+      <h3>設定</h3>
+      <div class="settings-item" id="exportCsv">
+        ⬇️&nbsp; 匯出成 CSV
+      </div>
+      <div class="settings-item" id="exportJson">
+        📄&nbsp; 匯出成 JSON
+      </div>
+    </div>
+  </div>
+
+  <!-- 主內容 -->
+  <div class="main">
+    <div class="dropzone" id="dropzone">
+      <div class="icon">📂</div>
+      <h2>選擇 CSV 檔案</h2>
+      <p>點擊下方按鈕或將檔案拖曳到此處</p>
+      <button class="btn-upload" id="uploadBtn">選擇檔案</button>
+    </div>
+
+    <input type="file" id="fileInput" accept=".csv,text/csv">
+
+    <div class="result" id="result">
+      <div class="result-header">
+        <h2 id="fileName"></h2>
+        <span class="info" id="fileInfo"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="csvTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ---------- 全域資料 ----------
+  let currentRows = [];   // array of arrays
+  let currentHeaders = [];
+
+  // ---------- 設定面板開關 ----------
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsPanel = document.getElementById('settingsPanel');
+  settingsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    settingsPanel.classList.toggle('open');
+  });
+  document.addEventListener('click', () => settingsPanel.classList.remove('open'));
+
+  // ---------- 搜尋列（放大鏡） ----------
+  const searchBox = document.getElementById('searchBox');
+  const magnifierBtn = document.getElementById('magnifierBtn');
+  const searchInput = document.getElementById('searchInput');
+  const clearBtn = document.getElementById('clearBtn');
+
+  magnifierBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    searchBox.classList.add('open');
+    searchInput.focus();
+    settingsPanel.classList.remove('open');
+  });
+
+  clearBtn.addEventListener('click', () => {
+    searchInput.value = '';
+    searchInput.focus();
+    renderFiltered();
+  });
+
+  searchInput.addEventListener('input', renderFiltered);
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      searchInput.value = '';
+      searchBox.classList.remove('open');
+      renderFiltered();
+    }
+  });
+
+  // ---------- 檔案選擇 ----------
+  const fileInput = document.getElementById('fileInput');
+  const dropzone = document.getElementById('dropzone');
+  const uploadBtn = document.getElementById('uploadBtn');
+
+  uploadBtn.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handleFile(file);
+    fileInput.value = '';
+  });
+
+  // 拖曳支援
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('dragover');
+  });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  // ---------- 處理 CSV ----------
+  function handleFile(file) {
+    if (!/\.csv$/i.test(file.name)) {
+      alert('請選擇 CSV 格式的檔案');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const { headers, rows } = parseCSV(text);
+
+      // 第一列當標題
+      currentHeaders = headers;
+      currentRows = rows;
+      renderTable(file.name, headers, rows);
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  // 簡單 CSV parser，支援雙引號與逗號
+  function parseCSV(text) {
+    const lines = [];
+    let row = [], field = '', inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i+1] === '"') { field += '"'; i++; }
+          else inQuotes = false;
+        } else field += c;
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n') { row.push(field); lines.push(row); row = []; field = ''; }
+        else if (c === '\r') { /* ignore */ }
+        else field += c;
+      }
+    }
+    // 最後一列
+    if (field !== '' || row.length) { row.push(field); lines.push(row); }
+
+    // 去除空白列
+    const clean = lines.filter(r => r.some(c => String(c).trim() !== ''));
+    if (clean.length === 0) return { headers: [], rows: [] };
+
+    const headers = clean[0];
+    const rows = clean.slice(1);
+    return { headers, rows };
+  }
+
+  // ---------- 渲染表格 ----------
+  function renderTable(name, headers, rows) {
+    currentHeaders = headers;
+    currentRows = rows;
+
+    const result = document.getElementById('result');
+    const thead = document.querySelector('#csvTable thead');
+
+    // 表頭
+    thead.innerHTML = '<tr>' + headers.map(h =>
+      `<th>${escapeHtml(String(h))}</th>`).join('') + '</tr>';
+
+    document.getElementById('fileName').textContent = '📄 ' + name;
+    document.getElementById('fileInfo').textContent =
+      `${rows.length} 列資料 × ${headers.length} 欄`;
+
+    result.classList.add('show');
+    dropzone.style.display = 'none';
+
+    renderFiltered();
+  }
+
+  // 依關鍵字篩選並渲染資料列
+  function renderFiltered() {
+    const tbody = document.querySelector('#csvTable tbody');
+    const kw = searchInput.value.trim().toLowerCase();
+    let shown;
+    if (!kw) {
+      shown = currentRows;
+    } else {
+      shown = currentRows.filter(r =>
+        r.some(c => String(c ?? '').toLowerCase().includes(kw))
+      );
+    }
+    tbody.innerHTML = shown.map(r =>
+      '<tr>' + r.map(c =>
+        `<td>${escapeHtml(String(c))}</td>`).join('') + '</tr>'
+    ).join('');
+
+    const info = document.getElementById('fileInfo');
+    if (kw) {
+      info.textContent = `${shown.length} / ${currentRows.length} 列 × ${currentHeaders.length} 欄`;
+      clearBtn.style.display = 'block';
+    } else {
+      info.textContent = `${currentRows.length} 列資料 × ${currentHeaders.length} 欄`;
+      clearBtn.style.display = 'none';
+    }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ---------- 匯出功能 ----------
+  function download(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  document.getElementById('exportCsv').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!currentRows.length) { alert('尚未載入任何 CSV 資料'); return; }
+    // 重建 CSV 文字（含標題列）
+    const lines = [currentHeaders, ...currentRows]
+      .map(r => r.map(c => {
+        const s = String(c ?? '');
+        return (s.includes(',') || s.includes('"') || s.includes('\n'))
+          ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(','));
+    download('export.csv', lines.join('\r\n'), 'text/csv;charset=utf-8');
+    settingsPanel.classList.remove('open');
+  });
+
+  document.getElementById('exportJson').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!currentRows.length) { alert('尚未載入任何 CSV 資料'); return; }
+    const json = currentRows.map(r => {
+      const obj = {};
+      currentHeaders.forEach((h, i) => obj[h] = r[i]);
+      return obj;
+    });
+    download('export.json', JSON.stringify(json, null, 2), 'application/json;charset=utf-8');
+    settingsPanel.classList.remove('open');
+  });
+</script>
+</body>
+</html>

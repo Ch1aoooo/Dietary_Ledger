@@ -1,0 +1,16 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# Python / backend
+backend/.venv
+backend/__pycache__
+__pycache__/
+backend/data/*.db
+
+# build cache
+*.tsbuildinfo
+
+# IDE / local
+.claude/
