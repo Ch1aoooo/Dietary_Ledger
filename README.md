@@ -23,12 +23,18 @@
 **核心**
 
 - 透過雲端發票載具分析飲食習慣
-- 專門針對飲食紀錄的 AI 問答
+- 專門針對飲食紀錄的 AI 問答（AI 飲食顧問，Text-to-SQL 查詢自己的發票資料）
+- 個人化消費歸因：每筆保留估計值、信心程度、推論理由與資料來源，需要時交由使用者確認
 
 **附加**
 
 - 個人健康飲食推薦
 - 有需求時可於看診提供醫生飲食紀錄
+- 多使用者：各自的發票、個人檔案、確認紀錄與分析結果完全獨立
+- 中／英雙語介面，切換不影響進行中的分析（分析結果會持久化）
+- 手動補記發票涵蓋不到的食物、日期範圍選擇、單頁 A4 PDF 匯出
+
+> 上述使用者、語言與狀態相關功能的細節見第 7 節。
 
 ## 3. 系統架構
 
@@ -67,9 +73,13 @@ flowchart TD
 | 樣式與元件 | Tailwind CSS、shadcn/ui、Radix primitives | 介面與互動元件；UI primitives 位於 `src/components/ui` |
 | 圖表 | Recharts | 飲食分析視覺化 |
 | 路由 | React Router | 頁面導覽 |
+| Markdown | react-markdown、remark-gfm | AI 飲食顧問回覆排版 |
+| PDF 匯出 | html2canvas、jsPDF | 飲食摘要單頁 A4 匯出 |
 | 後端 | Python、FastAPI、Uvicorn | 模型請求代理與 API 服務 |
 | AI | 本地模型或雲端模型 API | 食品分類與食用量推估；供應商支援待確認 |
-| 儲存 | Sqlite | Demo 資料保存 |
+| 前端儲存 | localStorage | 發票、個人檔案、確認紀錄、分析結果（依使用者命名空間） |
+| 後端儲存 | SQLite | AI 飲食顧問的 Text-to-SQL 查詢資料 |
+| 國際化 | 自建對照表（`src/lib/messages.ts`） | 中／英介面文字 |
 
 ## 5. 安裝與執行
 
@@ -148,7 +158,36 @@ npm run preview
 | `/settings` | Settings | 設定、重試分析、重設 Demo 資料 |
 | `/onboarding` | Onboarding | 首次使用的卡片式 Profile 問卷 |
 
-## 7. 資料格式與 Demo 情境
+## 7. 使用者、語言與狀態管理
+
+### 多使用者
+
+側邊欄可新增／切換／刪除使用者。每個使用者的發票資料、個人飲食檔案、確認紀錄與分析結果彼此完全獨立——`src/lib/store.tsx` 的所有 localStorage key 會依「使用中的使用者 id」加上不同命名空間，切換使用者等於載入另一份互不干擾的資料。
+
+### 中／英雙語介面
+
+右上角提供「中文 ｜ EN」切換。介面以中文為基準，英文透過 `src/lib/messages.ts` 的對照表查表產生（查不到的字串會退回中文，不會讓畫面壞掉）。切換語言時會整頁重新載入以套用新語言。
+
+英文模式下，送往後端的分析請求會帶 `lang` 參數，讓 AI 產生的「推論理由（reasoning）」與「AI 飲食顧問」的回覆也以英文輸出——這部分無法用靜態對照表處理，改由 `backend/main.py` 依 `lang` 切換系統提示。日期格式也會跟著切換（中文 `2026年8月1日`、英文 `2026/8/1`），年份不省略。
+
+### 分析結果持久化
+
+AI 分析結果（以交易 id 為 key）會寫入 localStorage（依使用者命名空間）。因此**切換語言（整頁 reload）或切換使用者（元件重掛）都不會重跑已經完成的 AI 分析**——載入時直接讀回快取，只有還沒分析、或上次失敗的項目會重新送出。分析進行中每處理完一批就即時寫入快取，途中切換也只需補跑未完成的批次。`Settings → 重設 Demo 資料` 會一併清除此快取。
+
+### 手動補記食物
+
+發票涵蓋不到的食物（自己煮、朋友請客、公司提供…）可透過右下角的「＋」補記日期、品名與實際食用份量。手動記錄走與發票相同的分析流程（分類仍交給 AI），但食用量直接採用使用者輸入的值，不由 AI 推估。
+
+### 日期範圍與趨勢縮放
+
+- 總覽與交易明細各自有獨立的日期範圍選擇器，切換頁面或重新整理都會保留選取的區間。
+- 每週趨勢圖的週數依資料實際涵蓋範圍縮放：單月約 4 週、橫跨兩個月約 8 週，不再固定 4 週。
+
+### 匯出報告
+
+總覽頁面的「下載」按鈕會把「個人飲食歷史摘要」渲染成固定 A4 直向比例的隱藏節點，透過 html2canvas + jsPDF 匯出為**單頁 A4 PDF**，內容濃縮在一頁內。
+
+## 8. 資料格式與 Demo 情境
 
 ### CSV 檔格式
 
@@ -176,35 +215,45 @@ npm run preview
 
 上傳自訂檔案後，`/upload` 會沿用相同分析流程重新分析，並覆寫目前存於 localStorage 的資料。可透過 Settings → 重設 Demo 資料 還原內建範例。
 
-## 8. 分析失敗處理
+## 9. 分析失敗處理
 
 本專案沒有離線規則引擎備援。模型呼叫失敗、逾時，或回應遺漏部分交易時，受影響項目會標記為「分析失敗」。
 
 失敗狀態會顯示於 Dashboard 頂部提示、Transactions 表格及交易詳情面板。確認後端與模型連線恢復後，可於 Settings → 重試分析 再次處理。
 
-## 9. 專案目錄
+## 10. 專案目錄
 
 ```
-backend/                          FastAPI 模型代理
+backend/
+  main.py                         FastAPI 模型代理 + AI 飲食顧問（Text-to-SQL）
 src/
   components/                     Sidebar、Header、圖表、交易表格、ReviewCard、詳情面板
-    ui/                           shadcn/ui primitives
+    LanguageToggle / *Dialog      語言切換、新增／刪除使用者、手動記錄
+    ui/                           shadcn/ui primitives、日曆
   pages/                          各路由頁面
   data/
     sampleInvoice.csv             發票匯出格式範例
-  lib/                            store（localStorage）、analytics（彙整／推論）、colors、utils
+  lib/
+    store.tsx                     全域狀態 + localStorage（依使用者命名空間）
+    users.tsx                     多使用者切換
+    i18n.ts / messages.ts         中／英雙語層
+    analytics.ts                  彙整／推論、每週趨勢
+    dateRange.ts                  日期範圍與格式
+    pdfExport.ts                  單頁 A4 PDF 匯出
+    colors、utils
   services/
     api.ts                        API 存取
     llmFoodUnderstanding.ts        模型食品理解服務
+    dietCoach.ts                  AI 飲食顧問
   types/
     index.ts                      型別定義
   utils/
     einvoiceParser.ts             CSV 檔解析
-    processing                    CSV 檔 至 Transaction 的結構整形
-    modelPipeline                 AI 分類與食用量推估流程
+    processing.ts                 CSV 檔至 Transaction 的結構整形
+    modelPipeline.ts              AI 分類與食用量推估流程（分批 + 增量寫入快取）
 ```
 
-## 10. 已知限制與未來工作
+## 11. 已知限制與未來工作
 
 | 項目 | 目前限制 | 後續方向 |
 | --- | --- | --- |
@@ -216,7 +265,7 @@ src/
 
 團隊目前不具備財政部 API 開發者申請身分，本專案現階段因此採 CSV 檔上傳方式；未來是否可串接 API，仍需依平台實際資格、審核與授權條件確認。
 
-## 11. 第三方服務、資料與素材
+## 12. 第三方服務、資料與素材
 
 | 來源／服務 | 用途 | 使用與授權說明 |
 | --- | --- | --- |
@@ -224,11 +273,11 @@ src/
 | Google Gemini API | 企劃與預覽文件列出的模型服務 | 原企劃稱「免費授權」；本文件不將其視為無限制授權，使用方案、額度及條款需另行確認 |
 | GPT 5.6（Sponsor 技術） | 原企劃預計用於資料分析測試 | 原文件未確認實際採用情況 |
 
-## 12. 作品展示
+## 13. 作品展示
 
 - 評選影片：待補。
 
-## 13. 團隊成員
+## 14. 團隊成員
 
 | 姓名 | 暱稱 | GitHub 帳號 | 分工 |
 | --- | --- | --- | --- |
@@ -238,8 +287,8 @@ src/
 | 葉亭儀 | ty | yty1222 | 文件整理 |
 | 喻子勳 | yzx141310764 | Yzx141310764 | 品質驗證 |
 
-## 14. License
+## 15. License
 
 本專案採 [MIT License](LICENSE) 授權（見儲存庫根目錄的 `LICENSE` 檔）。
 
-MIT 僅涵蓋本專案自行撰寫的程式碼。第三方服務、資料與素材（財政部電子發票資料與匯出格式、Google Gemini API、其他 Sponsor 技術等）之使用條件、授權與額度，請依各來源的實際條款確認，詳見第 11 節。
+MIT 僅涵蓋本專案自行撰寫的程式碼。第三方服務、資料與素材（財政部電子發票資料與匯出格式、Google Gemini API、其他 Sponsor 技術等）之使用條件、授權與額度，請依各來源的實際條款確認，詳見第 12 節。
