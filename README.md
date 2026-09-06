@@ -240,7 +240,6 @@ src/
     analytics.ts                  彙整／推論、每週趨勢
     dateRange.ts                  日期範圍與格式
     pdfExport.ts                  單頁 A4 PDF 匯出
-    colors、utils
   services/
     api.ts                        API 存取
     llmFoodUnderstanding.ts        模型食品理解服務
