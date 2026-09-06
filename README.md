@@ -228,7 +228,7 @@ backend/
   main.py                         FastAPI 模型代理 + AI 飲食顧問（Text-to-SQL）
 src/
   components/                     Sidebar、Header、圖表、交易表格、ReviewCard、詳情面板
-    LanguageToggle / *Dialog      語言切換、新增／刪除使用者、手動記錄
+    LanguageToggle /              語言切換、新增／刪除使用者、手動記錄
     ui/                           shadcn/ui primitives、日曆
   pages/                          各路由頁面
   data/
